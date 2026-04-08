@@ -672,24 +672,72 @@ pub const Window = struct {
     }
 
     fn pushKeyEvent(self: *Window, key: u32, comptime event: wio.EventType) void {
-        if (keyToButton(key)) |button| {
-            self.events.push(@unionInit(wio.Event, @tagName(event), button));
+        // Use XKB keysym for layout-aware button mapping (fixes Y/Z swap on CH/DE keyboards).
+        // Falls back to physical keycode mapping if XKB is unavailable or keysym is not a letter.
+        const sym = if (xkb_state) |state| c.xkb_state_key_get_one_sym(state, key + 8) else 0;
+        const button = keysymToButton(sym) orelse keyToButton(key);
+        if (button) |b| {
+            self.events.push(@unionInit(wio.Event, @tagName(event), b));
         }
 
         if (self.text_options) |_| {
-            var sym = c.xkb_state_key_get_one_sym(xkb_state, key + 8);
+            var char_sym = sym;
             if (compose_state) |_| {
-                if (c.xkb_compose_state_feed(compose_state, sym) == h.XKB_COMPOSE_FEED_ACCEPTED) {
+                if (c.xkb_compose_state_feed(compose_state, char_sym) == h.XKB_COMPOSE_FEED_ACCEPTED) {
                     switch (c.xkb_compose_state_get_status(compose_state)) {
-                        h.XKB_COMPOSE_COMPOSED => sym = c.xkb_compose_state_get_one_sym(compose_state),
+                        h.XKB_COMPOSE_COMPOSED => char_sym = c.xkb_compose_state_get_one_sym(compose_state),
                         h.XKB_COMPOSE_COMPOSING, h.XKB_COMPOSE_CANCELLED => return,
                         else => {},
                     }
                 }
             }
-            const char = std.math.cast(u21, c.xkb_keysym_to_utf32(sym)) orelse return;
+            const char = std.math.cast(u21, c.xkb_keysym_to_utf32(char_sym)) orelse return;
             if (char >= ' ' and char != 0x7F) self.events.push(.{ .char = char });
         }
+    }
+
+    /// Map XKB keysym to wio.Button for letter keys (layout-aware).
+    /// Returns null for non-letter keysyms, so caller falls back to physical keycode.
+    fn keysymToButton(sym: u32) ?wio.Button {
+        // XKB_KEY_a (0x61) .. XKB_KEY_z (0x7a)
+        if (sym >= 0x61 and sym <= 0x7a) {
+            const buttons = comptime blk: {
+                var table: [26]wio.Button = undefined;
+                table['a' - 'a'] = .a;
+                table['b' - 'a'] = .b;
+                table['c' - 'a'] = .c;
+                table['d' - 'a'] = .d;
+                table['e' - 'a'] = .e;
+                table['f' - 'a'] = .f;
+                table['g' - 'a'] = .g;
+                table['h' - 'a'] = .h;
+                table['i' - 'a'] = .i;
+                table['j' - 'a'] = .j;
+                table['k' - 'a'] = .k;
+                table['l' - 'a'] = .l;
+                table['m' - 'a'] = .m;
+                table['n' - 'a'] = .n;
+                table['o' - 'a'] = .o;
+                table['p' - 'a'] = .p;
+                table['q' - 'a'] = .q;
+                table['r' - 'a'] = .r;
+                table['s' - 'a'] = .s;
+                table['t' - 'a'] = .t;
+                table['u' - 'a'] = .u;
+                table['v' - 'a'] = .v;
+                table['w' - 'a'] = .w;
+                table['x' - 'a'] = .x;
+                table['y' - 'a'] = .y;
+                table['z' - 'a'] = .z;
+                break :blk table;
+            };
+            return buttons[sym - 0x61];
+        }
+        // XKB_KEY_A (0x41) .. XKB_KEY_Z (0x5a) — Shift held
+        if (sym >= 0x41 and sym <= 0x5a) {
+            return keysymToButton(sym + 0x20); // lowercase and recurse
+        }
+        return null;
     }
 
     fn applyCursor(self: *Window) void {
