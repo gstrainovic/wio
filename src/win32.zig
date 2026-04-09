@@ -1440,30 +1440,31 @@ fn windowProc(window: w.HWND, msg: u32, wParam: w.WPARAM, lParam: w.LPARAM) call
                 }
             }
 
-            if (scancodeToButton(scancode)) |button| {
-                const modifier = switch (button) {
-                    .left_shift => &self.left_shift,
-                    .right_shift => &self.right_shift,
-                    .left_control => &self.left_control,
-                    .right_control => &self.right_control,
-                    .left_alt => &self.left_alt,
-                    .right_alt => &self.right_alt,
-                    .international2 => &self.international2,
-                    .international3 => &self.international3,
-                    .international4 => &self.international4,
-                    else => null,
-                };
-                if (flags & w.KF_UP == 0) {
-                    var repeat = (flags & w.KF_REPEAT != 0);
-                    if (modifier) |ptr| {
-                        repeat = ptr.*;
-                        ptr.* = true;
-                    }
-                    self.events.push(if (repeat) .{ .button_repeat = button } else .{ .button_press = button });
-                } else {
-                    if (modifier) |ptr| ptr.* = false;
-                    self.events.push(.{ .button_release = button });
+            // Try layout-aware button mapping first (fixes Y/Z swap on CH/DE keyboards),
+            // then fall back to physical scancode mapping for modifiers and special keys.
+            const button = vkToButton(@intCast(wParam), scancode) orelse scancodeToButton(scancode) orelse return 0;
+            const modifier = switch (button) {
+                .left_shift => &self.left_shift,
+                .right_shift => &self.right_shift,
+                .left_control => &self.left_control,
+                .right_control => &self.right_control,
+                .left_alt => &self.left_alt,
+                .right_alt => &self.right_alt,
+                .international2 => &self.international2,
+                .international3 => &self.international3,
+                .international4 => &self.international4,
+                else => null,
+            };
+            if (flags & w.KF_UP == 0) {
+                var repeat = (flags & w.KF_REPEAT != 0);
+                if (modifier) |ptr| {
+                    repeat = ptr.*;
+                    ptr.* = true;
                 }
+                self.events.push(if (repeat) .{ .button_repeat = button } else .{ .button_press = button });
+            } else {
+                if (modifier) |ptr| ptr.* = false;
+                self.events.push(.{ .button_release = button });
             }
             return 0;
         },
@@ -1574,6 +1575,68 @@ fn windowProc(window: w.HWND, msg: u32, wParam: w.WPARAM, lParam: w.LPARAM) call
         },
         else => return w.DefWindowProcW(window, msg, wParam, lParam),
     }
+}
+
+/// Map virtual key code to wio.Button using ToUnicodeEx for layout-aware letter mapping.
+/// Returns null for non-letter keys or when ToUnicodeEx fails, so caller falls back to scancode mapping.
+/// This fixes the Y/Z swap on Swiss/German (CH/DE) keyboard layouts.
+fn vkToButton(vk: u8, scancode: u9) ?wio.Button {
+    var key_state: [256]u8 = undefined;
+    _ = w.GetKeyboardState(&key_state);
+
+    const layout = w.GetKeyboardLayout(0);
+    var buf: [2]u16 = undefined;
+    const result = w.ToUnicodeEx(
+        @intCast(vk),
+        @intCast(scancode),
+        &key_state,
+        &buf,
+        @as(i32, 2),
+        0,
+        layout,
+    );
+
+    if (result >= 1) {
+        const cp = buf[0];
+        // ASCII lowercase letters: 'a' (0x61) .. 'z' (0x7a)
+        // Also handle uppercase and normalize to lowercase
+        const lower: u32 = if (cp >= 'A' and cp <= 'Z') cp + 0x20 else cp;
+        if (lower >= 0x61 and lower <= 0x7a) {
+            const buttons = comptime blk: {
+                var table: [26]wio.Button = undefined;
+                table['a' - 0x61] = .a;
+                table['b' - 0x61] = .b;
+                table['c' - 0x61] = .c;
+                table['d' - 0x61] = .d;
+                table['e' - 0x61] = .e;
+                table['f' - 0x61] = .f;
+                table['g' - 0x61] = .g;
+                table['h' - 0x61] = .h;
+                table['i' - 0x61] = .i;
+                table['j' - 0x61] = .j;
+                table['k' - 0x61] = .k;
+                table['l' - 0x61] = .l;
+                table['m' - 0x61] = .m;
+                table['n' - 0x61] = .n;
+                table['o' - 0x61] = .o;
+                table['p' - 0x61] = .p;
+                table['q' - 0x61] = .q;
+                table['r' - 0x61] = .r;
+                table['s' - 0x61] = .s;
+                table['t' - 0x61] = .t;
+                table['u' - 0x61] = .u;
+                table['v' - 0x61] = .v;
+                table['w' - 0x61] = .w;
+                table['x' - 0x61] = .x;
+                table['y' - 0x61] = .y;
+                table['z' - 0x61] = .z;
+                break :blk table;
+            };
+            return buttons[@intCast(lower - 0x61)];
+        }
+    }
+
+    return null;
 }
 
 fn scancodeToButton(scancode: u9) ?wio.Button {
