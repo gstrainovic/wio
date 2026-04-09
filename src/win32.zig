@@ -1443,6 +1443,7 @@ fn windowProc(window: w.HWND, msg: u32, wParam: w.WPARAM, lParam: w.LPARAM) call
             // Try layout-aware button mapping first (fixes Y/Z swap on CH/DE keyboards),
             // then fall back to physical scancode mapping for modifiers and special keys.
             const button = vkToButton(@intCast(wParam), scancode) orelse scancodeToButton(scancode) orelse return 0;
+
             const modifier = switch (button) {
                 .left_shift => &self.left_shift,
                 .right_shift => &self.right_shift,
@@ -1577,65 +1578,47 @@ fn windowProc(window: w.HWND, msg: u32, wParam: w.WPARAM, lParam: w.LPARAM) call
     }
 }
 
-/// Map virtual key code to wio.Button using ToUnicodeEx for layout-aware letter mapping.
-/// Returns null for non-letter keys or when ToUnicodeEx fails, so caller falls back to scancode mapping.
+/// Map virtual key code to wio.Button for layout-aware letter mapping.
+/// On Windows, wParam already contains the layout-correct VK code (VK_A..VK_Z),
+/// so we just map VK codes directly — no ToUnicodeEx needed.
 /// This fixes the Y/Z swap on Swiss/German (CH/DE) keyboard layouts.
 fn vkToButton(vk: u8, scancode: u9) ?wio.Button {
-    var key_state: [256]u8 = undefined;
-    _ = w.GetKeyboardState(&key_state);
-
-    const layout = w.GetKeyboardLayout(0);
-    var buf: [2]u16 = undefined;
-    const result = w.ToUnicodeEx(
-        @intCast(vk),
-        @intCast(scancode),
-        &key_state,
-        &buf,
-        @as(i32, 2),
-        0,
-        layout,
-    );
-
-    if (result >= 1) {
-        const cp = buf[0];
-        // ASCII lowercase letters: 'a' (0x61) .. 'z' (0x7a)
-        // Also handle uppercase and normalize to lowercase
-        const lower: u32 = if (cp >= 'A' and cp <= 'Z') cp + 0x20 else cp;
-        if (lower >= 0x61 and lower <= 0x7a) {
-            const buttons = comptime blk: {
-                var table: [26]wio.Button = undefined;
-                table['a' - 0x61] = .a;
-                table['b' - 0x61] = .b;
-                table['c' - 0x61] = .c;
-                table['d' - 0x61] = .d;
-                table['e' - 0x61] = .e;
-                table['f' - 0x61] = .f;
-                table['g' - 0x61] = .g;
-                table['h' - 0x61] = .h;
-                table['i' - 0x61] = .i;
-                table['j' - 0x61] = .j;
-                table['k' - 0x61] = .k;
-                table['l' - 0x61] = .l;
-                table['m' - 0x61] = .m;
-                table['n' - 0x61] = .n;
-                table['o' - 0x61] = .o;
-                table['p' - 0x61] = .p;
-                table['q' - 0x61] = .q;
-                table['r' - 0x61] = .r;
-                table['s' - 0x61] = .s;
-                table['t' - 0x61] = .t;
-                table['u' - 0x61] = .u;
-                table['v' - 0x61] = .v;
-                table['w' - 0x61] = .w;
-                table['x' - 0x61] = .x;
-                table['y' - 0x61] = .y;
-                table['z' - 0x61] = .z;
-                break :blk table;
-            };
-            return buttons[@intCast(lower - 0x61)];
-        }
+    _ = scancode;
+    // VK_A (0x41) through VK_Z (0x5A) are already layout-aware on Windows.
+    // When user presses physical Z on CH keyboard, Windows sends VK_Z (0x5A).
+    if (vk >= 0x41 and vk <= 0x5A) {
+        const buttons = comptime blk: {
+            var table: [26]wio.Button = undefined;
+            table[0] = .a;
+            table[1] = .b;
+            table[2] = .c;
+            table[3] = .d;
+            table[4] = .e;
+            table[5] = .f;
+            table[6] = .g;
+            table[7] = .h;
+            table[8] = .i;
+            table[9] = .j;
+            table[10] = .k;
+            table[11] = .l;
+            table[12] = .m;
+            table[13] = .n;
+            table[14] = .o;
+            table[15] = .p;
+            table[16] = .q;
+            table[17] = .r;
+            table[18] = .s;
+            table[19] = .t;
+            table[20] = .u;
+            table[21] = .v;
+            table[22] = .w;
+            table[23] = .x;
+            table[24] = .y;
+            table[25] = .z;
+            break :blk table;
+        };
+        return buttons[vk - 0x41];
     }
-
     return null;
 }
 
