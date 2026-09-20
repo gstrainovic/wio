@@ -62,6 +62,12 @@ var imports: extern struct {
     XFreeColormap: *const @TypeOf(h.XFreeColormap),
     XCreateImage: *const @TypeOf(h.XCreateImage),
     XPutImage: *const @TypeOf(h.XPutImage),
+} = undefined;
+const c = if (build_options.system_integration) h else &imports;
+
+/// GLX nur, wenn OpenGL gebaut wird. Sonst stehen die extern-Deklarationen zwar
+/// ungenutzt im Debug-Info und der Linker verlangt trotzdem libGL.
+var gl_imports: if (build_options.opengl) extern struct {
     glXQueryExtensionsString: *const @TypeOf(h.glXQueryExtensionsString),
     glXGetProcAddress: *const @TypeOf(h.glXGetProcAddress),
     glXChooseFBConfig: *const @TypeOf(h.glXChooseFBConfig),
@@ -70,8 +76,8 @@ var imports: extern struct {
     glXDestroyContext: *const @TypeOf(h.glXDestroyContext),
     glXMakeCurrent: *const @TypeOf(h.glXMakeCurrent),
     glXSwapBuffers: *const @TypeOf(h.glXSwapBuffers),
-} = undefined;
-const c = if (build_options.system_integration) h else &imports;
+} else extern struct {} = undefined;
+const cgl = if (build_options.system_integration) h else &gl_imports;
 
 var glx: struct {
     swapIntervalEXT: h.PFNGLXSWAPINTERVALEXTPROC = null,
@@ -113,7 +119,7 @@ pub fn init() !bool {
     errdefer libXcursor.close();
 
     if (build_options.opengl) {
-        DynLib.load(&imports, &.{.{ .handle = &libGL, .name = "libGL.so.1", .prefix = "glX" }}) catch return false;
+        DynLib.load(&gl_imports, &.{.{ .handle = &libGL, .name = "libGL.so.1", .prefix = "glX" }}) catch return false;
     }
     errdefer if (build_options.opengl) libGL.close();
 
@@ -177,13 +183,13 @@ pub fn init() !bool {
     }
 
     if (build_options.opengl) {
-        if (c.glXQueryExtensionsString(display, h.DefaultScreen(display))) |extensions| {
+        if (cgl.glXQueryExtensionsString(display, h.DefaultScreen(display))) |extensions| {
             var iter = std.mem.tokenizeScalar(u8, std.mem.sliceTo(extensions, 0), ' ');
             while (iter.next()) |name| {
                 if (std.mem.eql(u8, name, "GLX_ARB_create_context_profile")) {
-                    glx.createContextAttribsARB = @ptrCast(c.glXGetProcAddress("glXCreateContextAttribsARB"));
+                    glx.createContextAttribsARB = @ptrCast(cgl.glXGetProcAddress("glXCreateContextAttribsARB"));
                 } else if (std.mem.eql(u8, name, "GLX_EXT_swap_control")) {
-                    glx.swapIntervalEXT = @ptrCast(c.glXGetProcAddress("glXSwapIntervalEXT"));
+                    glx.swapIntervalEXT = @ptrCast(cgl.glXGetProcAddress("glXSwapIntervalEXT"));
                 }
             }
         }
@@ -221,7 +227,7 @@ pub fn createWindow(options: wio.CreateWindowOptions) !*Window {
     if (build_options.opengl) {
         if (options.opengl) |opengl| {
             var count: c_int = undefined;
-            const configs = c.glXChooseFBConfig(display, h.DefaultScreen(display), &[_]c_int{
+            const configs = cgl.glXChooseFBConfig(display, h.DefaultScreen(display), &[_]c_int{
                 h.GLX_DOUBLEBUFFER,   if (opengl.doublebuffer) h.True else h.False,
                 h.GLX_RED_SIZE,       opengl.red_bits,
                 h.GLX_GREEN_SIZE,     opengl.green_bits,
@@ -237,7 +243,7 @@ pub fn createWindow(options: wio.CreateWindowOptions) !*Window {
 
             const config = configs[0];
 
-            const info: *h.XVisualInfo = c.glXGetVisualFromFBConfig(display, config) orelse return internal.logUnexpected("glXGetVisualFromFBConfig");
+            const info: *h.XVisualInfo = cgl.glXGetVisualFromFBConfig(display, config) orelse return internal.logUnexpected("glXGetVisualFromFBConfig");
             defer _ = c.XFree(info);
             visual = info.visual;
             depth = info.depth;
@@ -254,12 +260,12 @@ pub fn createWindow(options: wio.CreateWindowOptions) !*Window {
                     h.None,
                 }) orelse return internal.logUnexpected("glXCreateContextAttribsARB")
             else
-                c.glXCreateNewContext(display, config, h.GLX_RGBA_TYPE, null, h.True) orelse return internal.logUnexpected("glXCreateNewContext");
+                cgl.glXCreateNewContext(display, config, h.GLX_RGBA_TYPE, null, h.True) orelse return internal.logUnexpected("glXCreateNewContext");
         }
     }
     errdefer if (build_options.opengl) {
         if (options.opengl != null) {
-            c.glXDestroyContext(display, context);
+            cgl.glXDestroyContext(display, context);
             _ = c.XFreeColormap(display, attributes.colormap);
         }
     };
@@ -359,7 +365,7 @@ pub const Window = struct {
         _ = windows.remove(self.window);
 
         if (build_options.opengl) {
-            if (self.opengl.context) |context| c.glXDestroyContext(display, context);
+            if (self.opengl.context) |context| cgl.glXDestroyContext(display, context);
             if (self.opengl.colormap != h.CopyFromParent) _ = c.XFreeColormap(display, self.opengl.colormap);
         }
         _ = c.XDestroyIC(self.ic);
@@ -552,11 +558,11 @@ pub const Window = struct {
     }
 
     pub fn makeContextCurrent(self: *Window) void {
-        _ = c.glXMakeCurrent(display, self.window, self.opengl.context);
+        _ = cgl.glXMakeCurrent(display, self.window, self.opengl.context);
     }
 
     pub fn swapBuffers(self: *Window) void {
-        c.glXSwapBuffers(display, self.window);
+        cgl.glXSwapBuffers(display, self.window);
     }
 
     pub fn swapInterval(self: *Window, interval: i32) void {
@@ -608,7 +614,7 @@ pub const Framebuffer = struct {
 };
 
 pub fn glGetProcAddress(name: [*:0]const u8) ?*const anyopaque {
-    return c.glXGetProcAddress(name);
+    return cgl.glXGetProcAddress(name);
 }
 
 pub fn getVulkanExtensions() []const [*:0]const u8 {
