@@ -31,12 +31,18 @@ var mm_notification_client = MMNotificationClient{};
 pub fn init() !void {
     const instance = w.GetModuleHandleW(null);
 
-    const class = std.mem.zeroInit(w.WNDCLASSW, .{
+    // Programm-Icon aus der Ressource WIO_ICON (wie GLFW_ICON bei GLFW); fehlt sie,
+    // bleibt das Standard-Icon.
+    const icon_name = w.L("WIO_ICON");
+    const class = std.mem.zeroInit(w.WNDCLASSEXW, .{
+        .cbSize = @sizeOf(w.WNDCLASSEXW),
         .lpfnWndProc = windowProc,
         .hInstance = instance,
+        .hIcon = w.LoadImageW(instance, icon_name, w.IMAGE_ICON, w.GetSystemMetrics(w.SM_CXICON), w.GetSystemMetrics(w.SM_CYICON), 0),
+        .hIconSm = w.LoadImageW(instance, icon_name, w.IMAGE_ICON, w.GetSystemMetrics(w.SM_CXSMICON), w.GetSystemMetrics(w.SM_CYSMICON), 0),
         .lpszClassName = class_name,
     });
-    if (w.RegisterClassW(&class) == 0) return logLastError("RegisterClassW");
+    if (w.RegisterClassExW(&class) == 0) return logLastError("RegisterClassExW");
 
     helper_window = w.CreateWindowExW(
         0,
